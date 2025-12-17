@@ -5,8 +5,8 @@ import (
 	"fmt"
 	"os"
 
-	"github.com/sujal/doceye/config"
-	"github.com/sujal/doceye/tui"
+	"github.com/gettinshitdun/doceye/config"
+	"github.com/gettinshitdun/doceye/tui"
 )
 
 func main() {

@@ -20,7 +20,7 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 	"github.com/fsnotify/fsnotify"
-	"github.com/sujal/doceye/config"
+	"github.com/gettinshitdun/doceye/config"
 )
 
 // Status represents the state of a project

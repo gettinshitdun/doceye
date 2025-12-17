@@ -14,13 +14,13 @@ An interactive TUI project launcher built with [Bubble Tea](https://github.com/c
 ## Installation
 
 ```bash
-go install github.com/sujal/doceye@latest
+go install github.com/gettinshitdun/doceye@latest
 ```
 
 Or build from source:
 
 ```bash
-git clone https://github.com/sujal/doceye.git
+git clone https://github.com/gettinshitdun/doceye.git
 cd doceye
 make install
 ```
