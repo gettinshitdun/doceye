@@ -1,16 +1,33 @@
 package tui
 
 import (
+	"bufio"
 	"fmt"
+	"io"
+	"net"
 	"os"
 	"os/exec"
+	"regexp"
 	"strings"
+	"sync"
 	"syscall"
+	"time"
 
 	"github.com/charmbracelet/bubbles/key"
+	"github.com/charmbracelet/bubbles/viewport"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 	"github.com/sujal/doceye/config"
+)
+
+// Status represents the state of a project
+type Status int
+
+const (
+	StatusStopped Status = iota
+	StatusStarting
+	StatusRunning
+	StatusFailed
 )
 
 // Styles
@@ -36,8 +53,14 @@ var (
 	runningStyle = lipgloss.NewStyle().
 			Foreground(lipgloss.Color("#04B575"))
 
+	startingStyle = lipgloss.NewStyle().
+			Foreground(lipgloss.Color("#E5C07B"))
+
 	stoppedStyle = lipgloss.NewStyle().
 			Foreground(lipgloss.Color("#666666"))
+
+	failedStyle = lipgloss.NewStyle().
+			Foreground(lipgloss.Color("#E06C75"))
 
 	detailStyle = lipgloss.NewStyle().
 			Foreground(lipgloss.Color("#888888")).
@@ -58,20 +81,108 @@ var (
 	statusBarStyle = lipgloss.NewStyle().
 			Foreground(lipgloss.Color("#888888")).
 			MarginTop(1)
+
+	logTitleStyle = lipgloss.NewStyle().
+			Bold(true).
+			Foreground(lipgloss.Color("#61AFEF")).
+			MarginTop(1)
+
+	logStyle = lipgloss.NewStyle().
+			Border(lipgloss.RoundedBorder()).
+			BorderForeground(lipgloss.Color("#3d3d5c")).
+			Padding(0, 1)
+
+	errorMsgStyle = lipgloss.NewStyle().
+			Foreground(lipgloss.Color("#E06C75")).
+			PaddingLeft(4)
 )
+
+// PortInfo contains information about a process using a port
+type PortInfo struct {
+	PID     string
+	Command string
+	User    string
+}
+
+// LogBuffer stores logs for a process
+type LogBuffer struct {
+	lines []string
+	mu    sync.Mutex
+}
+
+func NewLogBuffer() *LogBuffer {
+	return &LogBuffer{
+		lines: make([]string, 0),
+	}
+}
+
+func (lb *LogBuffer) Write(p []byte) (n int, err error) {
+	lb.mu.Lock()
+	defer lb.mu.Unlock()
+
+	text := string(p)
+	newLines := strings.Split(text, "\n")
+	for _, line := range newLines {
+		if line != "" {
+			lb.lines = append(lb.lines, line)
+			// Keep only last 1000 lines
+			if len(lb.lines) > 1000 {
+				lb.lines = lb.lines[len(lb.lines)-1000:]
+			}
+		}
+	}
+	return len(p), nil
+}
+
+func (lb *LogBuffer) GetLines() []string {
+	lb.mu.Lock()
+	defer lb.mu.Unlock()
+	result := make([]string, len(lb.lines))
+	copy(result, lb.lines)
+	return result
+}
+
+func (lb *LogBuffer) GetContent() string {
+	lines := lb.GetLines()
+	return strings.Join(lines, "\n")
+}
 
 // Process tracks a running command
 type Process struct {
-	Cmd *exec.Cmd
-	PID int
+	Cmd              *exec.Cmd
+	PID              int
+	Status           Status
+	Logs             *LogBuffer
+	ExitCode         int
+	ProcessDone      bool // true if the process has exited
+	PortCheckRetries int  // count of port check failures after process exit
 }
+
+// Messages for async operations
+type portCheckMsg struct {
+	idx  int
+	isUp bool
+}
+
+type processExitMsg struct {
+	idx      int
+	exitCode int
+	err      error
+}
+
+type logUpdateMsg struct{}
+
+type tickMsg time.Time
 
 // KeyMap defines keybindings
 type KeyMap struct {
-	Up     key.Binding
-	Down   key.Binding
-	Toggle key.Binding
-	Quit   key.Binding
+	Up         key.Binding
+	Down       key.Binding
+	Toggle     key.Binding
+	ToggleLogs key.Binding
+	ScrollUp   key.Binding
+	ScrollDown key.Binding
+	Quit       key.Binding
 }
 
 var DefaultKeyMap = KeyMap{
@@ -84,37 +195,258 @@ var DefaultKeyMap = KeyMap{
 	Toggle: key.NewBinding(
 		key.WithKeys("enter", " "),
 	),
+	ToggleLogs: key.NewBinding(
+		key.WithKeys("l"),
+	),
+	ScrollUp: key.NewBinding(
+		key.WithKeys("ctrl+u"),
+	),
+	ScrollDown: key.NewBinding(
+		key.WithKeys("ctrl+d"),
+	),
 	Quit: key.NewBinding(
-		key.WithKeys("q", "ctrl+c"),
+		key.WithKeys("q", "ctrl+c", "esc"),
 	),
 }
 
 // Model represents the TUI state
 type Model struct {
-	projects  []config.Project
-	processes map[int]*Process // index -> process
-	cursor    int
-	keys      KeyMap
-	quitting  bool
+	projects      []config.Project
+	processes     map[int]*Process
+	cursor        int
+	keys          KeyMap
+	quitting      bool
+	spinner       int
+	showLogs      bool
+	viewport      viewport.Model
+	width         int
+	height        int
+	errorMessages map[int]string
+	program       *tea.Program
 }
+
+var spinnerFrames = []string{".", "..", "..."}
 
 // NewModel creates a new TUI model
 func NewModel(projects []config.Project) Model {
+	vp := viewport.New(80, 10)
+	vp.Style = logStyle
+
 	return Model{
-		projects:  projects,
-		processes: make(map[int]*Process),
-		cursor:    0,
-		keys:      DefaultKeyMap,
+		projects:      projects,
+		processes:     make(map[int]*Process),
+		cursor:        0,
+		keys:          DefaultKeyMap,
+		spinner:       0,
+		showLogs:      false,
+		viewport:      vp,
+		width:         80,
+		height:        24,
+		errorMessages: make(map[int]string),
 	}
 }
 
 func (m Model) Init() tea.Cmd {
-	return nil
+	return tea.Batch(tickCmd(), logUpdateCmd())
+}
+
+func tickCmd() tea.Cmd {
+	return tea.Tick(500*time.Millisecond, func(t time.Time) tea.Msg {
+		return tickMsg(t)
+	})
+}
+
+func logUpdateCmd() tea.Cmd {
+	return tea.Tick(100*time.Millisecond, func(t time.Time) tea.Msg {
+		return logUpdateMsg{}
+	})
+}
+
+func checkPortCmd(idx int, port int) tea.Cmd {
+	return func() tea.Msg {
+		addr := fmt.Sprintf("localhost:%d", port)
+		conn, err := net.DialTimeout("tcp", addr, 200*time.Millisecond)
+		if err != nil {
+			return portCheckMsg{idx: idx, isUp: false}
+		}
+		conn.Close()
+		return portCheckMsg{idx: idx, isUp: true}
+	}
+}
+
+func waitForProcessCmd(idx int, cmd *exec.Cmd) tea.Cmd {
+	return func() tea.Msg {
+		err := cmd.Wait()
+		exitCode := 0
+		if err != nil {
+			if exitErr, ok := err.(*exec.ExitError); ok {
+				exitCode = exitErr.ExitCode()
+			} else {
+				exitCode = -1
+			}
+		}
+		return processExitMsg{idx: idx, exitCode: exitCode, err: err}
+	}
+}
+
+// checkPortInUse checks if a port is already in use and returns info about the process
+func checkPortInUse(port int) (bool, *PortInfo) {
+	// First, use lsof to check if anything is listening on the port
+	// This is more reliable than trying to connect
+	cmd := exec.Command("lsof", "-i", fmt.Sprintf(":%d", port), "-P", "-n", "-sTCP:LISTEN")
+	output, err := cmd.Output()
+	if err != nil || len(output) == 0 {
+		// No process listening on this port
+		return false, nil
+	}
+
+	lines := strings.Split(string(output), "\n")
+	if len(lines) < 2 {
+		return false, nil
+	}
+
+	for _, line := range lines[1:] {
+		if strings.TrimSpace(line) == "" {
+			continue
+		}
+
+		fields := regexp.MustCompile(`\s+`).Split(strings.TrimSpace(line), -1)
+		if len(fields) >= 3 {
+			return true, &PortInfo{
+				Command: fields[0],
+				PID:     fields[1],
+				User:    fields[2],
+			}
+		}
+	}
+
+	return false, nil
 }
 
 func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
+	var cmds []tea.Cmd
+
 	switch msg := msg.(type) {
+	case tea.WindowSizeMsg:
+		m.width = msg.Width
+		m.height = msg.Height
+		m.viewport.Width = msg.Width - 4
+		m.viewport.Height = 12
+		return m, nil
+
+	case logUpdateMsg:
+		if m.showLogs {
+			if proc, ok := m.processes[m.cursor]; ok {
+				content := proc.Logs.GetContent()
+				m.viewport.SetContent(content)
+				m.viewport.GotoBottom()
+			}
+		}
+		return m, logUpdateCmd()
+
+	case tickMsg:
+		m.spinner = (m.spinner + 1) % len(spinnerFrames)
+
+		for idx, proc := range m.processes {
+			project := m.projects[idx]
+			// Keep checking port for Starting status, or if process exited but we're waiting
+			if project.Port > 0 && (proc.Status == StatusStarting || (proc.ProcessDone && proc.Status != StatusFailed && proc.Status != StatusRunning)) {
+				cmds = append(cmds, checkPortCmd(idx, project.Port))
+			}
+		}
+		cmds = append(cmds, tickCmd())
+		return m, tea.Batch(cmds...)
+
+	case portCheckMsg:
+		if proc, ok := m.processes[msg.idx]; ok {
+			project := m.projects[msg.idx]
+			if msg.isUp {
+				// Port is up - service is running regardless of process state
+				// (handles daemonized processes)
+				if proc.Status == StatusStarting || proc.Status == StatusFailed {
+					proc.Status = StatusRunning
+					proc.PortCheckRetries = 0
+					delete(m.errorMessages, msg.idx)
+				}
+			} else if proc.ProcessDone && proc.Status == StatusStarting {
+				// Process has exited and port still not up
+				// Give it more time (30 retries * 500ms = 15 seconds grace period)
+				proc.PortCheckRetries++
+				if proc.PortCheckRetries >= 30 {
+					proc.Status = StatusFailed
+					if proc.ExitCode != 0 {
+						m.errorMessages[msg.idx] = fmt.Sprintf("Process exited with code %d", proc.ExitCode)
+					} else {
+						m.errorMessages[msg.idx] = fmt.Sprintf("Process exited but port %d never came up", project.Port)
+					}
+				}
+			}
+		}
+		return m, nil
+
+	case processExitMsg:
+		if proc, ok := m.processes[msg.idx]; ok {
+			proc.ExitCode = msg.exitCode
+			proc.ProcessDone = true
+			project := m.projects[msg.idx]
+
+			// For projects with a port, don't immediately mark as failed
+			// Let the port check determine if it's actually running (daemonized process)
+			if project.Port > 0 {
+				// Check port one more time before deciding
+				addr := fmt.Sprintf("localhost:%d", project.Port)
+				conn, err := net.DialTimeout("tcp", addr, 200*time.Millisecond)
+				if err == nil {
+					conn.Close()
+					// Port is up! Process daemonized successfully
+					proc.Status = StatusRunning
+					return m, nil
+				}
+				// Port not up yet - if we were starting, keep waiting for port checks
+				// If exit code != 0, mark as failed immediately
+				if msg.exitCode != 0 {
+					proc.Status = StatusFailed
+					m.errorMessages[msg.idx] = fmt.Sprintf("Process exited with code %d", msg.exitCode)
+				}
+				// If exit code == 0 but port not up, port check will handle it
+			} else {
+				// No port to check - use exit code
+				if msg.exitCode != 0 {
+					proc.Status = StatusFailed
+					m.errorMessages[msg.idx] = fmt.Sprintf("Process exited with code %d", msg.exitCode)
+				} else {
+					proc.Status = StatusStopped
+					delete(m.processes, msg.idx)
+				}
+			}
+		}
+		return m, nil
+
 	case tea.KeyMsg:
+		if m.showLogs {
+			switch {
+			case key.Matches(msg, m.keys.Quit):
+				m.showLogs = false
+				return m, nil
+			case key.Matches(msg, m.keys.ToggleLogs):
+				m.showLogs = false
+				return m, nil
+			case key.Matches(msg, m.keys.ScrollUp):
+				m.viewport.HalfViewUp()
+				return m, nil
+			case key.Matches(msg, m.keys.ScrollDown):
+				m.viewport.HalfViewDown()
+				return m, nil
+			case msg.Type == tea.KeyUp:
+				m.viewport.LineUp(1)
+				return m, nil
+			case msg.Type == tea.KeyDown:
+				m.viewport.LineDown(1)
+				return m, nil
+			}
+			return m, nil
+		}
+
 		switch {
 		case key.Matches(msg, m.keys.Quit):
 			m.killAll()
@@ -132,49 +464,120 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 
 		case key.Matches(msg, m.keys.Toggle):
-			m.toggleProject(m.cursor)
+			cmd := m.toggleProject(m.cursor)
+			if cmd != nil {
+				cmds = append(cmds, cmd)
+			}
+			return m, tea.Batch(cmds...)
+
+		case key.Matches(msg, m.keys.ToggleLogs):
+			if proc, ok := m.processes[m.cursor]; ok {
+				m.showLogs = true
+				content := proc.Logs.GetContent()
+				m.viewport.SetContent(content)
+				m.viewport.GotoBottom()
+			}
 		}
 	}
 
 	return m, nil
 }
 
-func (m *Model) toggleProject(idx int) {
-	if proc, running := m.processes[idx]; running {
-		// Kill the process
+func (m *Model) toggleProject(idx int) tea.Cmd {
+	delete(m.errorMessages, idx)
+
+	if proc, exists := m.processes[idx]; exists {
 		if proc.Cmd.Process != nil {
-			// Kill the process group
 			syscall.Kill(-proc.PID, syscall.SIGTERM)
 		}
 		delete(m.processes, idx)
-	} else {
-		// Start the process
-		project := m.projects[idx]
+		m.showLogs = false
+		return nil
+	}
 
-		// Check if directory exists
-		if _, err := os.Stat(project.Path); os.IsNotExist(err) {
-			return
-		}
+	project := m.projects[idx]
 
-		shell := os.Getenv("SHELL")
-		if shell == "" {
-			shell = "/bin/zsh"
-		}
+	if _, err := os.Stat(project.Path); os.IsNotExist(err) {
+		m.errorMessages[idx] = fmt.Sprintf("Directory not found: %s", project.Path)
+		return nil
+	}
 
-		cmd := exec.Command(shell, "-c", project.Command)
-		cmd.Dir = project.Path
-		cmd.SysProcAttr = &syscall.SysProcAttr{
-			Setpgid: true,
+	if project.Port > 0 {
+		inUse, portInfo := checkPortInUse(project.Port)
+		if inUse {
+			if portInfo != nil {
+				m.errorMessages[idx] = fmt.Sprintf("Port %d in use by %s (PID: %s, User: %s)",
+					project.Port, portInfo.Command, portInfo.PID, portInfo.User)
+			} else {
+				m.errorMessages[idx] = fmt.Sprintf("Port %d is already in use", project.Port)
+			}
+			return nil
 		}
+	}
 
-		if err := cmd.Start(); err != nil {
-			return
-		}
+	shell := os.Getenv("SHELL")
+	if shell == "" {
+		shell = "/bin/zsh"
+	}
 
-		m.processes[idx] = &Process{
-			Cmd: cmd,
-			PID: cmd.Process.Pid,
-		}
+	cmd := exec.Command(shell, "-c", project.Command)
+	cmd.Dir = project.Path
+	cmd.SysProcAttr = &syscall.SysProcAttr{
+		Setpgid: true,
+	}
+
+	logBuffer := NewLogBuffer()
+
+	stdout, err := cmd.StdoutPipe()
+	if err != nil {
+		m.errorMessages[idx] = fmt.Sprintf("Failed to create stdout pipe: %v", err)
+		return nil
+	}
+
+	stderr, err := cmd.StderrPipe()
+	if err != nil {
+		m.errorMessages[idx] = fmt.Sprintf("Failed to create stderr pipe: %v", err)
+		return nil
+	}
+
+	if err := cmd.Start(); err != nil {
+		m.errorMessages[idx] = fmt.Sprintf("Failed to start: %v", err)
+		return nil
+	}
+
+	go captureOutput(stdout, logBuffer)
+	go captureOutput(stderr, logBuffer)
+
+	status := StatusRunning
+	if project.Port > 0 {
+		status = StatusStarting
+	}
+
+	m.processes[idx] = &Process{
+		Cmd:              cmd,
+		PID:              cmd.Process.Pid,
+		Status:           status,
+		Logs:             logBuffer,
+		ExitCode:         0,
+		ProcessDone:      false,
+		PortCheckRetries: 0,
+	}
+
+	// Start watching for process exit
+	var cmds []tea.Cmd
+	cmds = append(cmds, waitForProcessCmd(idx, cmd))
+
+	if project.Port > 0 {
+		cmds = append(cmds, checkPortCmd(idx, project.Port))
+	}
+
+	return tea.Batch(cmds...)
+}
+
+func captureOutput(r io.Reader, lb *LogBuffer) {
+	scanner := bufio.NewScanner(r)
+	for scanner.Scan() {
+		lb.Write([]byte(scanner.Text() + "\n"))
 	}
 }
 
@@ -187,30 +590,26 @@ func (m *Model) killAll() {
 	}
 }
 
-func (m *Model) isRunning(idx int) bool {
+func (m *Model) getStatus(idx int) Status {
 	if proc, ok := m.processes[idx]; ok {
-		// Check if process is still running
-		if proc.Cmd.Process != nil {
-			// Try to check if process exists
-			err := proc.Cmd.Process.Signal(syscall.Signal(0))
-			if err != nil {
-				delete(m.processes, idx)
-				return false
-			}
-			return true
-		}
+		return proc.Status
 	}
-	return false
+	return StatusStopped
 }
 
-func (m *Model) runningCount() int {
-	count := 0
+func (m *Model) countByStatus() (starting, running, failed int) {
 	for idx := range m.processes {
-		if m.isRunning(idx) {
-			count++
+		status := m.getStatus(idx)
+		switch status {
+		case StatusStarting:
+			starting++
+		case StatusRunning:
+			running++
+		case StatusFailed:
+			failed++
 		}
 	}
-	return count
+	return
 }
 
 func (m Model) View() string {
@@ -220,12 +619,10 @@ func (m Model) View() string {
 
 	var b strings.Builder
 
-	// Title
 	title := titleStyle.Render("doceye")
 	b.WriteString(title)
 	b.WriteString("\n\n")
 
-	// Project list
 	var items strings.Builder
 	for i, project := range m.projects {
 		cursor := "  "
@@ -233,20 +630,34 @@ func (m Model) View() string {
 			cursor = cursorStyle.Render("> ")
 		}
 
-		// Status indicator
-		var status string
+		status := m.getStatus(i)
+		var statusText string
 		var name string
-		running := m.isRunning(i)
 
-		if running {
-			status = runningStyle.Render("[ON] ")
+		switch status {
+		case StatusRunning:
+			statusText = runningStyle.Render("[ON]  ")
 			if i == m.cursor {
 				name = selectedStyle.Render(project.Name)
 			} else {
 				name = runningStyle.Render(project.Name)
 			}
-		} else {
-			status = stoppedStyle.Render("[--] ")
+		case StatusStarting:
+			statusText = startingStyle.Render("[" + spinnerFrames[m.spinner] + "]  ")
+			if i == m.cursor {
+				name = selectedStyle.Render(project.Name)
+			} else {
+				name = startingStyle.Render(project.Name)
+			}
+		case StatusFailed:
+			statusText = failedStyle.Render("[XX]  ")
+			if i == m.cursor {
+				name = selectedStyle.Render(project.Name)
+			} else {
+				name = failedStyle.Render(project.Name)
+			}
+		default:
+			statusText = stoppedStyle.Render("[--]  ")
 			if i == m.cursor {
 				name = selectedStyle.Render(project.Name)
 			} else {
@@ -254,11 +665,13 @@ func (m Model) View() string {
 			}
 		}
 
-		items.WriteString(cursor + status + name)
+		items.WriteString(cursor + statusText + name)
 
-		// Show PID if running
-		if running {
-			if proc, ok := m.processes[i]; ok {
+		if proc, ok := m.processes[i]; ok && status != StatusStopped {
+			if status == StatusFailed {
+				info := stoppedStyle.Render(fmt.Sprintf(" (exit: %d)", proc.ExitCode))
+				items.WriteString(info)
+			} else {
 				pid := stoppedStyle.Render(fmt.Sprintf(" (PID: %d)", proc.PID))
 				items.WriteString(pid)
 			}
@@ -266,7 +679,6 @@ func (m Model) View() string {
 
 		items.WriteString("\n")
 
-		// Show details for selected item
 		if i == m.cursor {
 			path := detailStyle.Render(fmt.Sprintf("Path: %s", project.Path))
 			cmd := detailStyle.Render(fmt.Sprintf("Cmd:  %s", project.Command))
@@ -276,6 +688,10 @@ func (m Model) View() string {
 			if project.Port > 0 {
 				url := urlStyle.Render(fmt.Sprintf("URL:  %s", project.URL()))
 				items.WriteString(url + "\n")
+			}
+
+			if errMsg, ok := m.errorMessages[i]; ok {
+				items.WriteString(errorMsgStyle.Render("Error: "+errMsg) + "\n")
 			}
 		}
 
@@ -287,21 +703,50 @@ func (m Model) View() string {
 	b.WriteString(containerStyle.Render(items.String()))
 	b.WriteString("\n")
 
-	// Status bar
-	runCount := m.runningCount()
+	if m.showLogs {
+		if proc, ok := m.processes[m.cursor]; ok {
+			projectName := m.projects[m.cursor].Name
+			var logTitle string
+			if proc.Status == StatusFailed {
+				logTitle = logTitleStyle.Render(fmt.Sprintf("Logs: %s (FAILED, exit: %d)", projectName, proc.ExitCode))
+			} else {
+				logTitle = logTitleStyle.Render(fmt.Sprintf("Logs: %s (PID: %d)", projectName, proc.PID))
+			}
+			b.WriteString(logTitle)
+			b.WriteString("\n")
+			b.WriteString(m.viewport.View())
+			b.WriteString("\n")
+		}
+	}
+
+	starting, running, failed := m.countByStatus()
+	var statusParts []string
+	if running > 0 {
+		statusParts = append(statusParts, fmt.Sprintf("%d running", running))
+	}
+	if starting > 0 {
+		statusParts = append(statusParts, fmt.Sprintf("%d starting", starting))
+	}
+	if failed > 0 {
+		statusParts = append(statusParts, failedStyle.Render(fmt.Sprintf("%d failed", failed)))
+	}
+
 	var statusText string
-	if runCount == 0 {
+	if len(statusParts) == 0 {
 		statusText = "No projects running"
-	} else if runCount == 1 {
-		statusText = "1 project running"
 	} else {
-		statusText = fmt.Sprintf("%d projects running", runCount)
+		statusText = strings.Join(statusParts, ", ")
 	}
 	b.WriteString(statusBarStyle.Render(statusText))
 	b.WriteString("\n\n")
 
-	// Help
-	help := helpStyle.Render("j/k: navigate | enter/space: toggle | q: quit")
+	var helpText string
+	if m.showLogs {
+		helpText = "j/k: scroll | ctrl+u/d: page | l/q/esc: close logs"
+	} else {
+		helpText = "j/k: navigate | enter/space: toggle | l: logs | q: quit"
+	}
+	help := helpStyle.Render(helpText)
 	b.WriteString(help)
 
 	return b.String()
@@ -310,7 +755,7 @@ func (m Model) View() string {
 // Run starts the TUI
 func Run(projects []config.Project) (*config.Project, error) {
 	model := NewModel(projects)
-	p := tea.NewProgram(model)
+	p := tea.NewProgram(model, tea.WithAltScreen())
 
 	_, err := p.Run()
 	if err != nil {
