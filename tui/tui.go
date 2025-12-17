@@ -181,12 +181,6 @@ type configChangedMsg struct {
 	newConfig *config.Config
 }
 
-// Messages for async operations
-type portCheckMsg struct {
-	idx  int
-	isUp bool
-}
-
 type processExitMsg struct {
 	idx      int
 	exitCode int
