@@ -951,3 +951,4 @@ func Run(projects []config.Project, configPath string) (*config.Project, error) 
 
 	return nil, nil
 }
+
