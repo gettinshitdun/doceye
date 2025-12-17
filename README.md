@@ -1,13 +1,14 @@
 # doceye
 
-A TUI project launcher built with [Bubble Tea](https://github.com/charmbracelet/bubbletea).
+An interactive TUI project launcher built with [Bubble Tea](https://github.com/charmbracelet/bubbletea).
 
 ## Features
 
 - Configure multiple projects in a YAML file
-- Beautiful terminal UI with keyboard navigation
-- Quick project launching with a single keystroke
-- Runs commands in the background
+- Interactive terminal UI with keyboard navigation
+- Start and stop projects with a single keystroke
+- Run multiple projects simultaneously
+- All processes are killed when you quit
 
 ## Installation
 
@@ -37,17 +38,17 @@ This creates a sample config at `~/.doceye.yaml`.
 
 ```yaml
 projects:
-  - name: "My API Server"
+  - name: "API Server"
     path: "/path/to/api"
     command: "go run main.go"
     port: 8080
 
-  - name: "Frontend Dev"
+  - name: "Frontend"
     path: "/path/to/frontend"
     command: "npm run dev"
     port: 3000
 
-  - name: "Background Worker"
+  - name: "Worker"
     path: "/path/to/worker"
     command: "python worker.py"
 ```
@@ -58,12 +59,6 @@ projects:
 doceye
 ```
 
-### Custom config path
-
-```bash
-doceye --config /path/to/custom-config.yaml
-```
-
 ## Config Options
 
 | Option | Required | Description |
@@ -71,16 +66,16 @@ doceye --config /path/to/custom-config.yaml
 | `name` | Yes | Project display name |
 | `path` | Yes | Project directory path |
 | `command` | Yes | Command to run |
-| `port` | No | Port number (shows URL in output) |
+| `port` | No | Port number (shows URL) |
 
 ## Keybindings
 
 | Key | Action |
 |-----|--------|
-| `k` / `up` | Move cursor up |
 | `j` / `down` | Move cursor down |
-| `Enter` | Select and run project |
-| `q` / `Esc` | Quit |
+| `k` / `up` | Move cursor up |
+| `enter` / `space` | Toggle project (start/stop) |
+| `q` / `ctrl+c` | Quit (kills all running projects) |
 
 ## CLI Flags
 

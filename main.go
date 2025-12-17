@@ -4,8 +4,6 @@ import (
 	"flag"
 	"fmt"
 	"os"
-	"os/exec"
-	"syscall"
 
 	"github.com/sujal/doceye/config"
 	"github.com/sujal/doceye/tui"
@@ -30,7 +28,7 @@ func main() {
 		fmt.Println("   name:    Project name")
 		fmt.Println("   path:    Project directory")
 		fmt.Println("   command: Command to run")
-		fmt.Println("   port:    Port number (optional, for browser access)")
+		fmt.Println("   port:    Port number (optional, shows URL)")
 		return
 	}
 
@@ -43,57 +41,8 @@ func main() {
 	}
 
 	// Run the TUI
-	selected, err := tui.Run(cfg.Projects)
-	if err != nil {
+	if _, err := tui.Run(cfg.Projects); err != nil {
 		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 		os.Exit(1)
 	}
-
-	// If user quit without selecting, exit gracefully
-	if selected == nil {
-		return
-	}
-
-	// Run the selected project
-	runProject(selected)
-}
-
-func runProject(project *config.Project) {
-	fmt.Printf("\nLaunching: %s\n", project.Name)
-	fmt.Printf("Directory: %s\n", project.Path)
-	fmt.Printf("Command: %s\n", project.Command)
-
-	if project.Port > 0 {
-		fmt.Printf("URL: %s\n", project.URL())
-	}
-
-	// Check if directory exists
-	if _, err := os.Stat(project.Path); os.IsNotExist(err) {
-		fmt.Fprintf(os.Stderr, "Error: directory does not exist: %s\n", project.Path)
-		os.Exit(1)
-	}
-
-	// Get shell from environment or use default
-	shell := os.Getenv("SHELL")
-	if shell == "" {
-		shell = "/bin/zsh"
-	}
-
-	// Create the command using shell
-	cmd := exec.Command(shell, "-c", project.Command)
-	cmd.Dir = project.Path
-
-	// Detach the process from the parent
-	cmd.SysProcAttr = &syscall.SysProcAttr{
-		Setpgid: true,
-	}
-
-	// Start the command in the background
-	if err := cmd.Start(); err != nil {
-		fmt.Fprintf(os.Stderr, "Error starting command: %v\n", err)
-		os.Exit(1)
-	}
-
-	fmt.Printf("[OK] Started in background (PID: %d)\n", cmd.Process.Pid)
-	fmt.Println("Tip: Use 'kill " + fmt.Sprint(cmd.Process.Pid) + "' to stop it")
 }
