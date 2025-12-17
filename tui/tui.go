@@ -13,10 +13,13 @@ import (
 	"syscall"
 	"time"
 
+	"path/filepath"
+
 	"github.com/charmbracelet/bubbles/key"
 	"github.com/charmbracelet/bubbles/viewport"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
+	"github.com/fsnotify/fsnotify"
 	"github.com/sujal/doceye/config"
 )
 
@@ -95,6 +98,9 @@ var (
 	errorMsgStyle = lipgloss.NewStyle().
 			Foreground(lipgloss.Color("#E06C75")).
 			PaddingLeft(4)
+
+	reloadStyle = lipgloss.NewStyle().
+			Foreground(lipgloss.Color("#E5C07B"))
 )
 
 // PortInfo contains information about a process using a port
@@ -125,7 +131,6 @@ func (lb *LogBuffer) Write(p []byte) (n int, err error) {
 	for _, line := range newLines {
 		if line != "" {
 			lb.lines = append(lb.lines, line)
-			// Keep only last 1000 lines
 			if len(lb.lines) > 1000 {
 				lb.lines = lb.lines[len(lb.lines)-1000:]
 			}
@@ -154,8 +159,8 @@ type Process struct {
 	Status           Status
 	Logs             *LogBuffer
 	ExitCode         int
-	ProcessDone      bool // true if the process has exited
-	PortCheckRetries int  // count of port check failures after process exit
+	ProcessDone      bool
+	PortCheckRetries int
 }
 
 // Messages for async operations
@@ -171,8 +176,10 @@ type processExitMsg struct {
 }
 
 type logUpdateMsg struct{}
-
 type tickMsg time.Time
+type configChangedMsg struct {
+	newConfig *config.Config
+}
 
 // KeyMap defines keybindings
 type KeyMap struct {
@@ -182,6 +189,7 @@ type KeyMap struct {
 	ToggleLogs key.Binding
 	ScrollUp   key.Binding
 	ScrollDown key.Binding
+	Reload     key.Binding
 	Quit       key.Binding
 }
 
@@ -199,10 +207,13 @@ var DefaultKeyMap = KeyMap{
 		key.WithKeys("l"),
 	),
 	ScrollUp: key.NewBinding(
-		key.WithKeys("ctrl+u"),
+		key.WithKeys("ctrl+u", "pgup"),
 	),
 	ScrollDown: key.NewBinding(
-		key.WithKeys("ctrl+d"),
+		key.WithKeys("ctrl+d", "pgdown"),
+	),
+	Reload: key.NewBinding(
+		key.WithKeys("r"),
 	),
 	Quit: key.NewBinding(
 		key.WithKeys("q", "ctrl+c", "esc"),
@@ -211,43 +222,111 @@ var DefaultKeyMap = KeyMap{
 
 // Model represents the TUI state
 type Model struct {
-	projects      []config.Project
-	processes     map[int]*Process
-	cursor        int
-	keys          KeyMap
-	quitting      bool
-	spinner       int
-	showLogs      bool
-	viewport      viewport.Model
-	width         int
-	height        int
-	errorMessages map[int]string
-	program       *tea.Program
+	projects         []config.Project
+	processes        map[int]*Process
+	cursor           int
+	keys             KeyMap
+	quitting         bool
+	spinner          int
+	showLogs         bool
+	viewport         viewport.Model
+	width            int
+	height           int
+	errorMessages    map[int]string
+	configPath       string
+	configReloaded   bool
+	configChangeChan chan *config.Config
 }
 
 var spinnerFrames = []string{".", "..", "..."}
 
 // NewModel creates a new TUI model
-func NewModel(projects []config.Project) Model {
-	vp := viewport.New(80, 10)
+func NewModel(projects []config.Project, configPath string) Model {
+	vp := viewport.New(80, 12)
 	vp.Style = logStyle
 
+	// Create channel for config changes
+	changeChan := make(chan *config.Config, 1)
+
+	// Start file watcher in background
+	go watchConfigFile(configPath, changeChan)
+
 	return Model{
-		projects:      projects,
-		processes:     make(map[int]*Process),
-		cursor:        0,
-		keys:          DefaultKeyMap,
-		spinner:       0,
-		showLogs:      false,
-		viewport:      vp,
-		width:         80,
-		height:        24,
-		errorMessages: make(map[int]string),
+		projects:         projects,
+		processes:        make(map[int]*Process),
+		cursor:           0,
+		keys:             DefaultKeyMap,
+		spinner:          0,
+		showLogs:         false,
+		viewport:         vp,
+		width:            80,
+		height:           24,
+		errorMessages:    make(map[int]string),
+		configPath:       configPath,
+		configReloaded:   false,
+		configChangeChan: changeChan,
+	}
+}
+
+// watchConfigFile watches the config file's directory for changes (handles vim/vscode rename-on-save)
+func watchConfigFile(configPath string, changeChan chan *config.Config) {
+	watcher, err := fsnotify.NewWatcher()
+	if err != nil {
+		return
+	}
+	defer watcher.Close()
+
+	// Watch the directory, not the file
+	dir := filepath.Dir(configPath)
+	filename := filepath.Base(configPath)
+
+	err = watcher.Add(dir)
+	if err != nil {
+		return
+	}
+
+	// Debounce timer to avoid multiple reloads
+	var debounceTimer *time.Timer
+
+	for {
+		select {
+		case event, ok := <-watcher.Events:
+			if !ok {
+				return
+			}
+
+			// Check if this event is for our config file
+			if filepath.Base(event.Name) != filename {
+				continue
+			}
+
+			// Handle Write, Create, or Rename events
+			if event.Op&(fsnotify.Write|fsnotify.Create|fsnotify.Rename) != 0 {
+				// Debounce: wait for all writes to complete
+				if debounceTimer != nil {
+					debounceTimer.Stop()
+				}
+				debounceTimer = time.AfterFunc(200*time.Millisecond, func() {
+					newConfig, err := config.Load(configPath)
+					if err == nil {
+						select {
+						case changeChan <- newConfig:
+						default:
+						}
+					}
+				})
+			}
+
+		case _, ok := <-watcher.Errors:
+			if !ok {
+				return
+			}
+		}
 	}
 }
 
 func (m Model) Init() tea.Cmd {
-	return tea.Batch(tickCmd(), logUpdateCmd())
+	return tea.Batch(tickCmd(), logUpdateCmd(), checkConfigChangeCmd(m.configChangeChan))
 }
 
 func tickCmd() tea.Cmd {
@@ -259,6 +338,29 @@ func tickCmd() tea.Cmd {
 func logUpdateCmd() tea.Cmd {
 	return tea.Tick(100*time.Millisecond, func(t time.Time) tea.Msg {
 		return logUpdateMsg{}
+	})
+}
+
+func checkConfigChangeCmd(changeChan chan *config.Config) tea.Cmd {
+	return tea.Tick(200*time.Millisecond, func(t time.Time) tea.Msg {
+		select {
+		case newConfig := <-changeChan:
+			return configChangedMsg{newConfig: newConfig}
+		default:
+			return checkConfigMsg{}
+		}
+	})
+}
+
+type checkConfigMsg struct{}
+
+type delayedRestartMsg struct {
+	indices []int
+}
+
+func delayedRestartCmd(indices []int) tea.Cmd {
+	return tea.Tick(1*time.Second, func(t time.Time) tea.Msg {
+		return delayedRestartMsg{indices: indices}
 	})
 }
 
@@ -289,14 +391,10 @@ func waitForProcessCmd(idx int, cmd *exec.Cmd) tea.Cmd {
 	}
 }
 
-// checkPortInUse checks if a port is already in use and returns info about the process
 func checkPortInUse(port int) (bool, *PortInfo) {
-	// First, use lsof to check if anything is listening on the port
-	// This is more reliable than trying to connect
 	cmd := exec.Command("lsof", "-i", fmt.Sprintf(":%d", port), "-P", "-n", "-sTCP:LISTEN")
 	output, err := cmd.Output()
 	if err != nil || len(output) == 0 {
-		// No process listening on this port
 		return false, nil
 	}
 
@@ -323,6 +421,27 @@ func checkPortInUse(port int) (bool, *PortInfo) {
 	return false, nil
 }
 
+// killProcessOnPort kills any process listening on the given port
+func killProcessOnPort(port int) {
+	cmd := exec.Command("lsof", "-i", fmt.Sprintf(":%d", port), "-P", "-n", "-sTCP:LISTEN", "-t")
+	output, err := cmd.Output()
+	if err != nil || len(output) == 0 {
+		return
+	}
+
+	pids := strings.Split(strings.TrimSpace(string(output)), "\n")
+	for _, pid := range pids {
+		pid = strings.TrimSpace(pid)
+		if pid != "" {
+			// Kill the process
+			exec.Command("kill", "-9", pid).Run()
+		}
+	}
+
+	// Give it a moment to release the port
+	time.Sleep(500 * time.Millisecond)
+}
+
 func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	var cmds []tea.Cmd
 
@@ -332,6 +451,75 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.height = msg.Height
 		m.viewport.Width = msg.Width - 4
 		m.viewport.Height = 12
+		return m, nil
+
+	case checkConfigMsg:
+		// Continue checking for config changes
+		return m, checkConfigChangeCmd(m.configChangeChan)
+
+	case configChangedMsg:
+		// Config file changed - reload and restart changed projects
+		m.configReloaded = true
+		oldProjects := m.projects
+		m.projects = msg.newConfig.Projects
+
+		// Collect indices of projects that need restart
+		var projectsToRestart []int
+
+		// Check each project for changes
+		for i, newProj := range m.projects {
+			if i < len(oldProjects) {
+				oldProj := oldProjects[i]
+				// If project config changed and it's running, restart it
+				if proc, running := m.processes[i]; running {
+					if newProj.Command != oldProj.Command || newProj.Path != oldProj.Path || newProj.Port != oldProj.Port {
+						// Kill old process
+						if proc.Cmd.Process != nil {
+							syscall.Kill(-proc.PID, syscall.SIGTERM)
+						}
+						// Also kill anything still using the port (e.g., Docker containers)
+						if oldProj.Port > 0 {
+							killProcessOnPort(oldProj.Port)
+						}
+						delete(m.processes, i)
+						delete(m.errorMessages, i)
+						projectsToRestart = append(projectsToRestart, i)
+					}
+				}
+			}
+		}
+
+		// Schedule delayed restart to allow ports to be released
+		if len(projectsToRestart) > 0 {
+			cmds = append(cmds, delayedRestartCmd(projectsToRestart))
+		}
+
+		// Continue watching for config changes
+		cmds = append(cmds, checkConfigChangeCmd(m.configChangeChan))
+
+		// Clear the reload indicator after 2 seconds
+		cmds = append(cmds, tea.Tick(2*time.Second, func(t time.Time) tea.Msg {
+			return clearReloadMsg{}
+		}))
+
+		return m, tea.Batch(cmds...)
+
+	case clearReloadMsg:
+		m.configReloaded = false
+		return m, nil
+
+	case delayedRestartMsg:
+		// Restart projects after delay (allows ports to be released)
+		var cmds []tea.Cmd
+		for _, idx := range msg.indices {
+			cmd := m.toggleProject(idx)
+			if cmd != nil {
+				cmds = append(cmds, cmd)
+			}
+		}
+		if len(cmds) > 0 {
+			return m, tea.Batch(cmds...)
+		}
 		return m, nil
 
 	case logUpdateMsg:
@@ -349,7 +537,6 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 		for idx, proc := range m.processes {
 			project := m.projects[idx]
-			// Keep checking port for Starting status, or if process exited but we're waiting
 			if project.Port > 0 && (proc.Status == StatusStarting || (proc.ProcessDone && proc.Status != StatusFailed && proc.Status != StatusRunning)) {
 				cmds = append(cmds, checkPortCmd(idx, project.Port))
 			}
@@ -361,16 +548,12 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if proc, ok := m.processes[msg.idx]; ok {
 			project := m.projects[msg.idx]
 			if msg.isUp {
-				// Port is up - service is running regardless of process state
-				// (handles daemonized processes)
 				if proc.Status == StatusStarting || proc.Status == StatusFailed {
 					proc.Status = StatusRunning
 					proc.PortCheckRetries = 0
 					delete(m.errorMessages, msg.idx)
 				}
 			} else if proc.ProcessDone && proc.Status == StatusStarting {
-				// Process has exited and port still not up
-				// Give it more time (30 retries * 500ms = 15 seconds grace period)
 				proc.PortCheckRetries++
 				if proc.PortCheckRetries >= 30 {
 					proc.Status = StatusFailed
@@ -390,27 +573,19 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			proc.ProcessDone = true
 			project := m.projects[msg.idx]
 
-			// For projects with a port, don't immediately mark as failed
-			// Let the port check determine if it's actually running (daemonized process)
 			if project.Port > 0 {
-				// Check port one more time before deciding
 				addr := fmt.Sprintf("localhost:%d", project.Port)
 				conn, err := net.DialTimeout("tcp", addr, 200*time.Millisecond)
 				if err == nil {
 					conn.Close()
-					// Port is up! Process daemonized successfully
 					proc.Status = StatusRunning
 					return m, nil
 				}
-				// Port not up yet - if we were starting, keep waiting for port checks
-				// If exit code != 0, mark as failed immediately
 				if msg.exitCode != 0 {
 					proc.Status = StatusFailed
 					m.errorMessages[msg.idx] = fmt.Sprintf("Process exited with code %d", msg.exitCode)
 				}
-				// If exit code == 0 but port not up, port check will handle it
 			} else {
-				// No port to check - use exit code
 				if msg.exitCode != 0 {
 					proc.Status = StatusFailed
 					m.errorMessages[msg.idx] = fmt.Sprintf("Process exited with code %d", msg.exitCode)
@@ -425,10 +600,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.KeyMsg:
 		if m.showLogs {
 			switch {
-			case key.Matches(msg, m.keys.Quit):
-				m.showLogs = false
-				return m, nil
-			case key.Matches(msg, m.keys.ToggleLogs):
+			case key.Matches(msg, m.keys.Quit), key.Matches(msg, m.keys.ToggleLogs):
 				m.showLogs = false
 				return m, nil
 			case key.Matches(msg, m.keys.ScrollUp):
@@ -437,11 +609,11 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			case key.Matches(msg, m.keys.ScrollDown):
 				m.viewport.HalfViewDown()
 				return m, nil
-			case msg.Type == tea.KeyUp:
-				m.viewport.LineUp(1)
+			case key.Matches(msg, m.keys.Up):
+				m.viewport.LineUp(3)
 				return m, nil
-			case msg.Type == tea.KeyDown:
-				m.viewport.LineDown(1)
+			case key.Matches(msg, m.keys.Down):
+				m.viewport.LineDown(3)
 				return m, nil
 			}
 			return m, nil
@@ -477,18 +649,34 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.viewport.SetContent(content)
 				m.viewport.GotoBottom()
 			}
+
+		case key.Matches(msg, m.keys.Reload):
+			// Manual reload
+			newConfig, err := config.Load(m.configPath)
+			if err == nil {
+				return m, func() tea.Msg {
+					return configChangedMsg{newConfig: newConfig}
+				}
+			}
 		}
 	}
 
 	return m, nil
 }
 
+type clearReloadMsg struct{}
+
 func (m *Model) toggleProject(idx int) tea.Cmd {
 	delete(m.errorMessages, idx)
 
 	if proc, exists := m.processes[idx]; exists {
+		project := m.projects[idx]
 		if proc.Cmd.Process != nil {
 			syscall.Kill(-proc.PID, syscall.SIGTERM)
+		}
+		// Also kill anything using the port (e.g., Docker containers)
+		if project.Port > 0 {
+			killProcessOnPort(project.Port)
 		}
 		delete(m.processes, idx)
 		m.showLogs = false
@@ -563,15 +751,14 @@ func (m *Model) toggleProject(idx int) tea.Cmd {
 		PortCheckRetries: 0,
 	}
 
-	// Start watching for process exit
-	var cmds []tea.Cmd
-	cmds = append(cmds, waitForProcessCmd(idx, cmd))
+	var resultCmds []tea.Cmd
+	resultCmds = append(resultCmds, waitForProcessCmd(idx, cmd))
 
 	if project.Port > 0 {
-		cmds = append(cmds, checkPortCmd(idx, project.Port))
+		resultCmds = append(resultCmds, checkPortCmd(idx, project.Port))
 	}
 
-	return tea.Batch(cmds...)
+	return tea.Batch(resultCmds...)
 }
 
 func captureOutput(r io.Reader, lb *LogBuffer) {
@@ -619,7 +806,12 @@ func (m Model) View() string {
 
 	var b strings.Builder
 
-	title := titleStyle.Render("doceye")
+	// Title with reload indicator
+	titleText := "doceye"
+	if m.configReloaded {
+		titleText = "doceye " + reloadStyle.Render("[config reloaded]")
+	}
+	title := titleStyle.Render(titleText)
 	b.WriteString(title)
 	b.WriteString("\n\n")
 
@@ -742,9 +934,9 @@ func (m Model) View() string {
 
 	var helpText string
 	if m.showLogs {
-		helpText = "j/k: scroll | ctrl+u/d: page | l/q/esc: close logs"
+		helpText = "j/k: scroll | ctrl+u/d: page | l/esc: close logs"
 	} else {
-		helpText = "j/k: navigate | enter/space: toggle | l: logs | q: quit"
+		helpText = "j/k: navigate | enter/space: toggle | l: logs | r: reload | q: quit"
 	}
 	help := helpStyle.Render(helpText)
 	b.WriteString(help)
@@ -753,8 +945,8 @@ func (m Model) View() string {
 }
 
 // Run starts the TUI
-func Run(projects []config.Project) (*config.Project, error) {
-	model := NewModel(projects)
+func Run(projects []config.Project, configPath string) (*config.Project, error) {
+	model := NewModel(projects, configPath)
 	p := tea.NewProgram(model, tea.WithAltScreen())
 
 	_, err := p.Run()
