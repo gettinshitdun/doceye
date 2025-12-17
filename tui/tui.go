@@ -181,6 +181,22 @@ type configChangedMsg struct {
 	newConfig *config.Config
 }
 
+// Messages for async operations
+type portCheckMsg struct {
+	idx  int
+	isUp bool
+}
+
+type processExitMsg struct {
+	idx      int
+	exitCode int
+	err      error
+}
+
+type logUpdateMsg struct{}
+
+type tickMsg time.Time
+
 // KeyMap defines keybindings
 type KeyMap struct {
 	Up         key.Binding
