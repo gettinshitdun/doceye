@@ -1,0 +1,21 @@
+# doceye configuration file
+# Add your projects below
+
+projects:
+  - name: "Sample API Server"
+    path: "/Users/sujal.ja/main/personal/projects/doceye"
+    command: "python3 -m http.server 8080"
+    port: 8080
+
+  - name: "Frontend Dev"
+    path: "/Users/sujal.ja/main/personal/projects/doceye"
+    command: "python3 -m http.server 3000"
+    port: 3000
+
+  - name: "List Files"
+    path: "/Users/sujal.ja/main/personal/projects/doceye"
+    command: "ls -la"
+
+  - name: "Show Date"
+    path: "/tmp"
+    command: "date && pwd"
