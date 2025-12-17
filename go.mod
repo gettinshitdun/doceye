@@ -1,4 +1,4 @@
-module github.com/sujal/doceye
+module github.com/gettinshitdun/doceye
 
 go 1.24.0
 
