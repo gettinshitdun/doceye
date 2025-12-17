@@ -41,7 +41,7 @@ func main() {
 	}
 
 	// Run the TUI
-	if _, err := tui.Run(cfg.Projects); err != nil {
+	if _, err := tui.Run(cfg.Projects, *configPath); err != nil {
 		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 		os.Exit(1)
 	}
