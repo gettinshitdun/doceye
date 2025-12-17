@@ -33,74 +33,161 @@ const (
 	StatusFailed
 )
 
+// Color palette - Terminal-native, high contrast
+var (
+	// Core colors - using ANSI-friendly hex
+	colorGreen  = lipgloss.Color("#98c379")
+	colorYellow = lipgloss.Color("#e5c07b")
+	colorRed    = lipgloss.Color("#e06c75")
+	colorBlue   = lipgloss.Color("#61afef")
+	colorCyan   = lipgloss.Color("#56b6c2")
+	colorPurple = lipgloss.Color("#c678dd")
+	colorOrange = lipgloss.Color("#d19a66")
+
+	// Grayscale
+	colorWhite   = lipgloss.Color("#abb2bf")
+	colorGray    = lipgloss.Color("#5c6370")
+	colorDark    = lipgloss.Color("#3e4451")
+	colorDarker  = lipgloss.Color("#282c34")
+	colorDarkest = lipgloss.Color("#21252b")
+)
+
 // Styles
 var (
-	titleStyle = lipgloss.NewStyle().
+	// ═══ Header ═══
+	headerStyle = lipgloss.NewStyle().
 			Bold(true).
-			Foreground(lipgloss.Color("#FF6B6B")).
-			Background(lipgloss.Color("#1a1a2e")).
-			Padding(0, 2)
+			Foreground(colorCyan)
 
-	itemStyle = lipgloss.NewStyle().
-			PaddingLeft(2)
+	versionStyle = lipgloss.NewStyle().
+			Foreground(colorGray)
 
-	selectedStyle = lipgloss.NewStyle().
-			PaddingLeft(0).
-			Foreground(lipgloss.Color("#04B575")).
+	// ═══ Table/List ═══
+	tableHeaderStyle = lipgloss.NewStyle().
+				Foreground(colorGray).
+				Bold(true)
+
+	selectedRowStyle = lipgloss.NewStyle().
+				Background(colorDark)
+
+	// ═══ Status ═══
+	statusRunning = lipgloss.NewStyle().
+			Foreground(colorGreen).
 			Bold(true)
 
-	cursorStyle = lipgloss.NewStyle().
-			Foreground(lipgloss.Color("#FF6B6B")).
-			Bold(true)
+	statusStarting = lipgloss.NewStyle().
+			Foreground(colorYellow)
 
-	runningStyle = lipgloss.NewStyle().
-			Foreground(lipgloss.Color("#04B575"))
+	statusStopped = lipgloss.NewStyle().
+			Foreground(colorGray)
 
-	startingStyle = lipgloss.NewStyle().
-			Foreground(lipgloss.Color("#E5C07B"))
+	statusFailed = lipgloss.NewStyle().
+			Foreground(colorRed)
 
-	stoppedStyle = lipgloss.NewStyle().
-			Foreground(lipgloss.Color("#666666"))
+	// ═══ Text hierarchy ═══
+	primaryText = lipgloss.NewStyle().
+			Foreground(colorWhite)
 
-	failedStyle = lipgloss.NewStyle().
-			Foreground(lipgloss.Color("#E06C75"))
+	secondaryText = lipgloss.NewStyle().
+			Foreground(colorGray)
 
-	detailStyle = lipgloss.NewStyle().
-			Foreground(lipgloss.Color("#888888")).
-			PaddingLeft(4)
+	mutedText = lipgloss.NewStyle().
+			Foreground(colorDark)
 
-	urlStyle = lipgloss.NewStyle().
-			Foreground(lipgloss.Color("#61AFEF")).
-			PaddingLeft(4)
+	highlightText = lipgloss.NewStyle().
+			Foreground(colorCyan)
 
-	helpStyle = lipgloss.NewStyle().
-			Foreground(lipgloss.Color("#626262"))
+	errorText = lipgloss.NewStyle().
+			Foreground(colorRed)
 
-	containerStyle = lipgloss.NewStyle().
-			Border(lipgloss.RoundedBorder()).
-			BorderForeground(lipgloss.Color("#3d3d5c")).
-			Padding(1, 2)
+	warningText = lipgloss.NewStyle().
+			Foreground(colorYellow)
 
-	statusBarStyle = lipgloss.NewStyle().
-			Foreground(lipgloss.Color("#888888")).
-			MarginTop(1)
+	successText = lipgloss.NewStyle().
+			Foreground(colorGreen)
 
-	logTitleStyle = lipgloss.NewStyle().
-			Bold(true).
-			Foreground(lipgloss.Color("#61AFEF")).
-			MarginTop(1)
+	linkText = lipgloss.NewStyle().
+			Foreground(colorBlue).
+			Underline(true)
 
-	logStyle = lipgloss.NewStyle().
-			Border(lipgloss.RoundedBorder()).
-			BorderForeground(lipgloss.Color("#3d3d5c")).
+	// ═══ Badges ═══
+	badgeRunning = lipgloss.NewStyle().
+			Foreground(colorDarkest).
+			Background(colorGreen).
 			Padding(0, 1)
 
-	errorMsgStyle = lipgloss.NewStyle().
-			Foreground(lipgloss.Color("#E06C75")).
-			PaddingLeft(4)
+	badgeStarting = lipgloss.NewStyle().
+			Foreground(colorDarkest).
+			Background(colorYellow).
+			Padding(0, 1)
 
-	reloadStyle = lipgloss.NewStyle().
-			Foreground(lipgloss.Color("#E5C07B"))
+	badgeFailed = lipgloss.NewStyle().
+			Foreground(colorDarkest).
+			Background(colorRed).
+			Padding(0, 1)
+
+	badgeStopped = lipgloss.NewStyle().
+			Foreground(colorWhite).
+			Background(colorDark).
+			Padding(0, 1)
+
+	// ═══ Panels ═══
+	panelStyle = lipgloss.NewStyle().
+			Border(lipgloss.RoundedBorder()).
+			BorderForeground(colorDark).
+			Padding(0, 1)
+
+	panelSelectedStyle = lipgloss.NewStyle().
+				Border(lipgloss.RoundedBorder()).
+				BorderForeground(colorCyan).
+				Padding(0, 1)
+
+	panelTitleStyle = lipgloss.NewStyle().
+			Foreground(colorCyan).
+			Bold(true)
+
+	// ═══ Details ═══
+	labelStyle = lipgloss.NewStyle().
+			Foreground(colorGray).
+			Width(8)
+
+	valueStyle = lipgloss.NewStyle().
+			Foreground(colorWhite)
+
+	// ═══ Help bar ═══
+	helpKeyStyle = lipgloss.NewStyle().
+			Foreground(colorYellow).
+			Bold(true)
+
+	helpDescStyle = lipgloss.NewStyle().
+			Foreground(colorGray)
+
+	helpSepStyle = lipgloss.NewStyle().
+			Foreground(colorDark)
+
+	// ═══ Search ═══
+	searchBoxStyle = lipgloss.NewStyle().
+			Border(lipgloss.RoundedBorder()).
+			BorderForeground(colorCyan).
+			Padding(0, 1)
+
+	searchPromptStyle = lipgloss.NewStyle().
+				Foreground(colorCyan).
+				Bold(true)
+
+	searchQueryStyle = lipgloss.NewStyle().
+				Foreground(colorWhite)
+
+	searchPlaceholderStyle = lipgloss.NewStyle().
+				Foreground(colorGray).
+				Italic(true)
+
+	// ═══ Misc ═══
+	dimStyle = lipgloss.NewStyle().
+			Foreground(colorDark)
+
+	accentStyle = lipgloss.NewStyle().
+			Foreground(colorCyan)
 )
 
 // PortInfo contains information about a process using a port
@@ -160,6 +247,7 @@ type Process struct {
 	Logs             *LogBuffer
 	ExitCode         int
 	ProcessDone      bool
+	StartTime        time.Time
 	PortCheckRetries int
 }
 
@@ -236,20 +324,58 @@ type Model struct {
 	configPath       string
 	configReloaded   bool
 	configChangeChan chan *config.Config
+	// Search
+	searchMode   bool
+	searchQuery  string
+	filteredIdxs []int // indices into projects slice that match search
 }
 
 var spinnerFrames = []string{".", "..", "..."}
 
+// formatUptime formats duration in a compact human-readable format
+func formatUptime(d time.Duration) string {
+	if d < time.Second {
+		return "<1s"
+	}
+	if d < time.Minute {
+		return fmt.Sprintf("%ds", int(d.Seconds()))
+	}
+	if d < time.Hour {
+		m := int(d.Minutes())
+		s := int(d.Seconds()) % 60
+		return fmt.Sprintf("%dm%ds", m, s)
+	}
+	h := int(d.Hours())
+	m := int(d.Minutes()) % 60
+	return fmt.Sprintf("%dh%dm", h, m)
+}
+
+// truncateString truncates a string to maxLen, adding ellipsis
+func truncateString(s string, maxLen int) string {
+	if len(s) <= maxLen {
+		return s
+	}
+	if maxLen <= 3 {
+		return s[:maxLen]
+	}
+	return s[:maxLen-3] + "..."
+}
+
 // NewModel creates a new TUI model
 func NewModel(projects []config.Project, configPath string) Model {
 	vp := viewport.New(80, 12)
-	vp.Style = logStyle
 
 	// Create channel for config changes
 	changeChan := make(chan *config.Config, 1)
 
 	// Start file watcher in background
 	go watchConfigFile(configPath, changeChan)
+
+	// Initialize filtered indices to all projects
+	filteredIdxs := make([]int, len(projects))
+	for i := range projects {
+		filteredIdxs[i] = i
+	}
 
 	return Model{
 		projects:         projects,
@@ -265,7 +391,48 @@ func NewModel(projects []config.Project, configPath string) Model {
 		configPath:       configPath,
 		configReloaded:   false,
 		configChangeChan: changeChan,
+		searchMode:       false,
+		searchQuery:      "",
+		filteredIdxs:     filteredIdxs,
 	}
+}
+
+// updateFilter updates the filtered indices based on search query
+func (m *Model) updateFilter() {
+	if m.searchQuery == "" {
+		// No search query, show all projects
+		m.filteredIdxs = make([]int, len(m.projects))
+		for i := range m.projects {
+			m.filteredIdxs[i] = i
+		}
+	} else {
+		// Filter projects by name (case-insensitive)
+		m.filteredIdxs = nil
+		query := strings.ToLower(m.searchQuery)
+		for i, p := range m.projects {
+			if strings.Contains(strings.ToLower(p.Name), query) ||
+				strings.Contains(strings.ToLower(p.Command), query) ||
+				strings.Contains(strings.ToLower(p.Path), query) {
+				m.filteredIdxs = append(m.filteredIdxs, i)
+			}
+		}
+	}
+
+	// Reset cursor if out of bounds
+	if m.cursor >= len(m.filteredIdxs) {
+		m.cursor = max(0, len(m.filteredIdxs)-1)
+	}
+}
+
+// getSelectedProjectIndex returns the actual project index for the current cursor position
+func (m Model) getSelectedProjectIndex() int {
+	if len(m.filteredIdxs) == 0 {
+		return -1
+	}
+	if m.cursor >= len(m.filteredIdxs) {
+		return m.filteredIdxs[len(m.filteredIdxs)-1]
+	}
+	return m.filteredIdxs[m.cursor]
 }
 
 // watchConfigFile watches the config file's directory for changes (handles vim/vscode rename-on-save)
@@ -458,6 +625,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		oldProjects := m.projects
 		m.projects = msg.newConfig.Projects
 
+		// Re-apply filter with new projects
+		m.updateFilter()
+
 		// Collect indices of projects that need restart
 		var projectsToRestart []int
 
@@ -593,6 +763,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case tea.KeyMsg:
+		// Handle log view mode
 		if m.showLogs {
 			switch {
 			case key.Matches(msg, m.keys.Quit), key.Matches(msg, m.keys.ToggleLogs):
@@ -614,8 +785,51 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 
+		// Handle search mode
+		if m.searchMode {
+			switch msg.Type {
+			case tea.KeyEsc:
+				// Exit search mode and clear search
+				m.searchMode = false
+				m.searchQuery = ""
+				m.updateFilter()
+				return m, nil
+			case tea.KeyEnter:
+				// Exit search mode but keep filter
+				m.searchMode = false
+				return m, nil
+			case tea.KeyBackspace:
+				if len(m.searchQuery) > 0 {
+					m.searchQuery = m.searchQuery[:len(m.searchQuery)-1]
+					m.updateFilter()
+				}
+				return m, nil
+			case tea.KeyRunes:
+				m.searchQuery += string(msg.Runes)
+				m.updateFilter()
+				return m, nil
+			case tea.KeySpace:
+				m.searchQuery += " "
+				m.updateFilter()
+				return m, nil
+			}
+			return m, nil
+		}
+
+		// Normal mode
 		switch {
+		case msg.String() == "/":
+			// Enter search mode
+			m.searchMode = true
+			return m, nil
+
 		case key.Matches(msg, m.keys.Quit):
+			// If there's a search filter, clear it first
+			if m.searchQuery != "" {
+				m.searchQuery = ""
+				m.updateFilter()
+				return m, nil
+			}
 			m.killAll()
 			m.quitting = true
 			return m, tea.Quit
@@ -626,23 +840,29 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 
 		case key.Matches(msg, m.keys.Down):
-			if m.cursor < len(m.projects)-1 {
+			if m.cursor < len(m.filteredIdxs)-1 {
 				m.cursor++
 			}
 
 		case key.Matches(msg, m.keys.Toggle):
-			cmd := m.toggleProject(m.cursor)
-			if cmd != nil {
-				cmds = append(cmds, cmd)
+			projectIdx := m.getSelectedProjectIndex()
+			if projectIdx >= 0 {
+				cmd := m.toggleProject(projectIdx)
+				if cmd != nil {
+					cmds = append(cmds, cmd)
+				}
 			}
 			return m, tea.Batch(cmds...)
 
 		case key.Matches(msg, m.keys.ToggleLogs):
-			if proc, ok := m.processes[m.cursor]; ok {
-				m.showLogs = true
-				content := proc.Logs.GetContent()
-				m.viewport.SetContent(content)
-				m.viewport.GotoBottom()
+			projectIdx := m.getSelectedProjectIndex()
+			if projectIdx >= 0 {
+				if proc, ok := m.processes[projectIdx]; ok {
+					m.showLogs = true
+					content := proc.Logs.GetContent()
+					m.viewport.SetContent(content)
+					m.viewport.GotoBottom()
+				}
 			}
 
 		case key.Matches(msg, m.keys.Reload):
@@ -744,6 +964,7 @@ func (m *Model) toggleProject(idx int) tea.Cmd {
 		ExitCode:         0,
 		ProcessDone:      false,
 		PortCheckRetries: 0,
+		StartTime:        time.Now(),
 	}
 
 	var resultCmds []tea.Cmd
@@ -801,140 +1022,296 @@ func (m Model) View() string {
 
 	var b strings.Builder
 
-	// Title with reload indicator
-	titleText := "doceye"
-	if m.configReloaded {
-		titleText = "doceye " + reloadStyle.Render("[config reloaded]")
-	}
-	title := titleStyle.Render(titleText)
-	b.WriteString(title)
-	b.WriteString("\n\n")
+	// ═══════════════════════════════════════════════════════════════════════════
+	// HEADER
+	// ═══════════════════════════════════════════════════════════════════════════
+	header := headerStyle.Render("DOCEYE")
+	header += "  " + versionStyle.Render("process manager")
 
-	var items strings.Builder
-	for i, project := range m.projects {
-		cursor := "  "
-		if i == m.cursor {
-			cursor = cursorStyle.Render("> ")
-		}
-
-		status := m.getStatus(i)
-		var statusText string
-		var name string
-
-		switch status {
-		case StatusRunning:
-			statusText = runningStyle.Render("[ON]  ")
-			if i == m.cursor {
-				name = selectedStyle.Render(project.Name)
-			} else {
-				name = runningStyle.Render(project.Name)
-			}
-		case StatusStarting:
-			statusText = startingStyle.Render("[" + spinnerFrames[m.spinner] + "]  ")
-			if i == m.cursor {
-				name = selectedStyle.Render(project.Name)
-			} else {
-				name = startingStyle.Render(project.Name)
-			}
-		case StatusFailed:
-			statusText = failedStyle.Render("[XX]  ")
-			if i == m.cursor {
-				name = selectedStyle.Render(project.Name)
-			} else {
-				name = failedStyle.Render(project.Name)
-			}
-		default:
-			statusText = stoppedStyle.Render("[--]  ")
-			if i == m.cursor {
-				name = selectedStyle.Render(project.Name)
-			} else {
-				name = itemStyle.Render(project.Name)
-			}
-		}
-
-		items.WriteString(cursor + statusText + name)
-
-		if proc, ok := m.processes[i]; ok && status != StatusStopped {
-			if status == StatusFailed {
-				info := stoppedStyle.Render(fmt.Sprintf(" (exit: %d)", proc.ExitCode))
-				items.WriteString(info)
-			} else {
-				pid := stoppedStyle.Render(fmt.Sprintf(" (PID: %d)", proc.PID))
-				items.WriteString(pid)
-			}
-		}
-
-		items.WriteString("\n")
-
-		if i == m.cursor {
-			path := detailStyle.Render(fmt.Sprintf("Path: %s", project.Path))
-			cmd := detailStyle.Render(fmt.Sprintf("Cmd:  %s", project.Command))
-			items.WriteString(path + "\n")
-			items.WriteString(cmd + "\n")
-
-			if project.Port > 0 {
-				url := urlStyle.Render(fmt.Sprintf("URL:  %s", project.URL()))
-				items.WriteString(url + "\n")
-			}
-
-			if errMsg, ok := m.errorMessages[i]; ok {
-				items.WriteString(errorMsgStyle.Render("Error: "+errMsg) + "\n")
-			}
-		}
-
-		if i < len(m.projects)-1 {
-			items.WriteString("\n")
-		}
-	}
-
-	b.WriteString(containerStyle.Render(items.String()))
-	b.WriteString("\n")
-
-	if m.showLogs {
-		if proc, ok := m.processes[m.cursor]; ok {
-			projectName := m.projects[m.cursor].Name
-			var logTitle string
-			if proc.Status == StatusFailed {
-				logTitle = logTitleStyle.Render(fmt.Sprintf("Logs: %s (FAILED, exit: %d)", projectName, proc.ExitCode))
-			} else {
-				logTitle = logTitleStyle.Render(fmt.Sprintf("Logs: %s (PID: %d)", projectName, proc.PID))
-			}
-			b.WriteString(logTitle)
-			b.WriteString("\n")
-			b.WriteString(m.viewport.View())
-			b.WriteString("\n")
-		}
-	}
-
+	// Status summary in header
 	starting, running, failed := m.countByStatus()
-	var statusParts []string
-	if running > 0 {
-		statusParts = append(statusParts, fmt.Sprintf("%d running", running))
-	}
+	total := len(m.projects)
+	header += "  " + dimStyle.Render("│")
+	header += fmt.Sprintf("  %s/%d", successText.Render(fmt.Sprintf("%d", running)), total)
+
 	if starting > 0 {
-		statusParts = append(statusParts, fmt.Sprintf("%d starting", starting))
+		header += "  " + warningText.Render(fmt.Sprintf("~%d", starting))
 	}
 	if failed > 0 {
-		statusParts = append(statusParts, failedStyle.Render(fmt.Sprintf("%d failed", failed)))
+		header += "  " + errorText.Render(fmt.Sprintf("!%d", failed))
 	}
 
-	var statusText string
-	if len(statusParts) == 0 {
-		statusText = "No projects running"
-	} else {
-		statusText = strings.Join(statusParts, ", ")
+	if m.configReloaded {
+		header += "  " + warningText.Render("[RELOADED]")
 	}
-	b.WriteString(statusBarStyle.Render(statusText))
+
+	b.WriteString(header)
+	b.WriteString("\n")
+	b.WriteString(dimStyle.Render(strings.Repeat("─", 80)))
 	b.WriteString("\n\n")
 
-	var helpText string
-	if m.showLogs {
-		helpText = "j/k: scroll | ctrl+u/d: page | l/esc: close logs"
-	} else {
-		helpText = "j/k: navigate | enter/space: toggle | l: logs | r: reload | q: quit"
+	// ═══════════════════════════════════════════════════════════════════════════
+	// SEARCH BAR
+	// ═══════════════════════════════════════════════════════════════════════════
+	if m.searchMode {
+		searchLine := searchPromptStyle.Render("FILTER: ")
+		if m.searchQuery == "" {
+			searchLine += searchPlaceholderStyle.Render("type to search name, path, or command...")
+		} else {
+			searchLine += searchQueryStyle.Render(m.searchQuery) + accentStyle.Render("█")
+		}
+		searchLine += "  " + secondaryText.Render(fmt.Sprintf("(%d/%d)", len(m.filteredIdxs), len(m.projects)))
+		b.WriteString(searchBoxStyle.Render(searchLine))
+		b.WriteString("\n\n")
+	} else if m.searchQuery != "" {
+		// Show active filter
+		filterLine := accentStyle.Render("FILTER: ") + primaryText.Render(m.searchQuery)
+		filterLine += "  " + secondaryText.Render(fmt.Sprintf("(%d/%d)", len(m.filteredIdxs), len(m.projects)))
+		filterLine += "  " + helpDescStyle.Render("[q to clear]")
+		b.WriteString(filterLine)
+		b.WriteString("\n\n")
 	}
-	help := helpStyle.Render(helpText)
-	b.WriteString(help)
+
+	// ═══════════════════════════════════════════════════════════════════════════
+	// PROJECT LIST
+	// ═══════════════════════════════════════════════════════════════════════════
+	if len(m.filteredIdxs) == 0 {
+		b.WriteString(secondaryText.Render("  No projects match filter\n"))
+	}
+
+	for cursorPos, projectIdx := range m.filteredIdxs {
+		project := m.projects[projectIdx]
+		isSelected := cursorPos == m.cursor
+		status := m.getStatus(projectIdx)
+		proc := m.processes[projectIdx]
+
+		// ─────────────────────────────────────────────────────────────────────
+		// Project separator (between projects, not before first)
+		// ─────────────────────────────────────────────────────────────────────
+		if cursorPos > 0 {
+			b.WriteString(dimStyle.Render("  ·─────────────────────────────────────────────────────────────────────────"))
+			b.WriteString("\n")
+		}
+
+		// ─────────────────────────────────────────────────────────────────────
+		// Main project row
+		// ─────────────────────────────────────────────────────────────────────
+		// Cursor indicator
+		if isSelected {
+			b.WriteString(highlightText.Render("▸ "))
+		} else {
+			b.WriteString("  ")
+		}
+
+		// Status icon
+		switch status {
+		case StatusRunning:
+			b.WriteString(successText.Render("● "))
+		case StatusStarting:
+			frames := []string{"◐", "◓", "◑", "◒"}
+			b.WriteString(warningText.Render(frames[m.spinner%len(frames)] + " "))
+		case StatusFailed:
+			b.WriteString(errorText.Render("✖ "))
+		default:
+			b.WriteString(secondaryText.Render("○ "))
+		}
+
+		// Project name (padded to 18 chars)
+		name := truncateString(project.Name, 18)
+		namePadded := fmt.Sprintf("%-18s", name)
+		if isSelected {
+			b.WriteString(primaryText.Bold(true).Render(namePadded))
+		} else if status == StatusStopped {
+			b.WriteString(secondaryText.Render(namePadded))
+		} else {
+			b.WriteString(primaryText.Render(namePadded))
+		}
+
+		b.WriteString("  ")
+
+		// Status text (padded to 10 chars)
+		var statusStr string
+		switch status {
+		case StatusRunning:
+			statusStr = successText.Render(fmt.Sprintf("%-10s", "RUNNING"))
+		case StatusStarting:
+			statusStr = warningText.Render(fmt.Sprintf("%-10s", "STARTING"))
+		case StatusFailed:
+			statusStr = errorText.Render(fmt.Sprintf("%-10s", "FAILED"))
+		default:
+			statusStr = secondaryText.Render(fmt.Sprintf("%-10s", "STOPPED"))
+		}
+		b.WriteString(statusStr)
+
+		b.WriteString("  ")
+
+		// PID (padded to 8 chars)
+		var pidStr string
+		if proc != nil && status != StatusStopped {
+			if status == StatusFailed {
+				pidStr = errorText.Render(fmt.Sprintf("%-8s", fmt.Sprintf("x:%d", proc.ExitCode)))
+			} else {
+				pidStr = primaryText.Render(fmt.Sprintf("%-8d", proc.PID))
+			}
+		} else {
+			pidStr = secondaryText.Render(fmt.Sprintf("%-8s", "---"))
+		}
+		b.WriteString(pidStr)
+
+		b.WriteString("  ")
+
+		// Uptime (padded to 8 chars)
+		var uptimeStr string
+		if proc != nil && (status == StatusRunning || status == StatusStarting) {
+			uptimeStr = successText.Render(fmt.Sprintf("%-8s", formatUptime(time.Since(proc.StartTime))))
+		} else {
+			uptimeStr = secondaryText.Render(fmt.Sprintf("%-8s", "---"))
+		}
+		b.WriteString(uptimeStr)
+
+		b.WriteString("  ")
+
+		// Port
+		if project.Port > 0 {
+			if status == StatusRunning {
+				b.WriteString(highlightText.Render(fmt.Sprintf(":%d", project.Port)))
+			} else {
+				b.WriteString(secondaryText.Render(fmt.Sprintf(":%d", project.Port)))
+			}
+		}
+
+		b.WriteString("\n")
+
+		// ─────────────────────────────────────────────────────────────────────
+		// Expanded Details (only for selected project)
+		// ─────────────────────────────────────────────────────────────────────
+		if isSelected {
+			// Path
+			b.WriteString(dimStyle.Render("    │ "))
+			b.WriteString(secondaryText.Render("path  "))
+			b.WriteString(valueStyle.Render(project.Path))
+			b.WriteString("\n")
+
+			// Command
+			b.WriteString(dimStyle.Render("    │ "))
+			b.WriteString(secondaryText.Render("cmd   "))
+			cmdDisplay := truncateString(project.Command, 55)
+			b.WriteString(valueStyle.Render(cmdDisplay))
+			b.WriteString("\n")
+
+			// URL
+			if project.Port > 0 {
+				b.WriteString(dimStyle.Render("    │ "))
+				b.WriteString(secondaryText.Render("url   "))
+				b.WriteString(linkText.Render(project.URL()))
+				b.WriteString("\n")
+			}
+
+			// Log preview
+			if proc != nil {
+				lines := proc.Logs.GetLines()
+				logCount := len(lines)
+				b.WriteString(dimStyle.Render("    │ "))
+				b.WriteString(secondaryText.Render("logs  "))
+				b.WriteString(secondaryText.Render(fmt.Sprintf("%d lines", logCount)))
+				if logCount > 0 {
+					lastLine := truncateString(lines[logCount-1], 45)
+					b.WriteString(dimStyle.Render(" ╴ "))
+					b.WriteString(mutedText.Render(lastLine))
+				}
+				b.WriteString("\n")
+			}
+
+			// Error message
+			if errMsg, ok := m.errorMessages[projectIdx]; ok {
+				b.WriteString(dimStyle.Render("    │ "))
+				b.WriteString(errorText.Bold(true).Render("err   "))
+				b.WriteString(errorText.Render(errMsg))
+				b.WriteString("\n")
+			}
+
+			b.WriteString(dimStyle.Render("    ╰"))
+			b.WriteString("\n")
+		}
+	}
+
+	b.WriteString("\n")
+
+	// ═══════════════════════════════════════════════════════════════════════════
+	// LOGS PANEL
+	// ═══════════════════════════════════════════════════════════════════════════
+	if m.showLogs {
+		projectIdx := m.getSelectedProjectIndex()
+		if projectIdx >= 0 {
+			if proc, ok := m.processes[projectIdx]; ok {
+				project := m.projects[projectIdx]
+
+				// Log header
+				logHeader := panelTitleStyle.Render("LOGS")
+				logHeader += "  " + primaryText.Render(project.Name)
+				logHeader += "  " + secondaryText.Render(fmt.Sprintf("pid:%d", proc.PID))
+				logHeader += "  " + secondaryText.Render(fmt.Sprintf("%d lines", len(proc.Logs.GetLines())))
+				if proc.Status == StatusFailed {
+					logHeader += "  " + errorText.Render(fmt.Sprintf("[exit:%d]", proc.ExitCode))
+				}
+
+				logContent := logHeader + "\n" + dimStyle.Render(strings.Repeat("─", 76)) + "\n" + m.viewport.View()
+				b.WriteString(panelStyle.Render(logContent))
+				b.WriteString("\n")
+			}
+		}
+	}
+
+	// ═══════════════════════════════════════════════════════════════════════════
+	// STATUS BAR
+	// ═══════════════════════════════════════════════════════════════════════════
+	var statusParts []string
+	if running > 0 {
+		statusParts = append(statusParts, badgeRunning.Render(fmt.Sprintf(" %d RUN ", running)))
+	}
+	if starting > 0 {
+		statusParts = append(statusParts, badgeStarting.Render(fmt.Sprintf(" %d WAIT ", starting)))
+	}
+	if failed > 0 {
+		statusParts = append(statusParts, badgeFailed.Render(fmt.Sprintf(" %d FAIL ", failed)))
+	}
+	stopped := total - running - starting - failed
+	if stopped > 0 {
+		statusParts = append(statusParts, badgeStopped.Render(fmt.Sprintf(" %d STOP ", stopped)))
+	}
+
+	if len(statusParts) > 0 {
+		b.WriteString(strings.Join(statusParts, " "))
+	}
+	b.WriteString("\n\n")
+
+	// ═══════════════════════════════════════════════════════════════════════════
+	// HELP BAR
+	// ═══════════════════════════════════════════════════════════════════════════
+	var helpItems []string
+	if m.searchMode {
+		helpItems = []string{
+			helpDescStyle.Render("Type to filter"),
+			helpKeyStyle.Render("Enter") + helpDescStyle.Render(" apply"),
+			helpKeyStyle.Render("Esc") + helpDescStyle.Render(" cancel"),
+		}
+	} else if m.showLogs {
+		helpItems = []string{
+			helpKeyStyle.Render("j/k") + helpDescStyle.Render(" scroll"),
+			helpKeyStyle.Render("u/d") + helpDescStyle.Render(" page"),
+			helpKeyStyle.Render("Esc") + helpDescStyle.Render(" close"),
+		}
+	} else {
+		helpItems = []string{
+			helpKeyStyle.Render("/") + helpDescStyle.Render(" filter"),
+			helpKeyStyle.Render("j/k") + helpDescStyle.Render(" select"),
+			helpKeyStyle.Render("Enter") + helpDescStyle.Render(" start/stop"),
+			helpKeyStyle.Render("l") + helpDescStyle.Render(" logs"),
+			helpKeyStyle.Render("r") + helpDescStyle.Render(" reload"),
+			helpKeyStyle.Render("q") + helpDescStyle.Render(" quit"),
+		}
+	}
+	b.WriteString(strings.Join(helpItems, helpSepStyle.Render("  ")))
 
 	return b.String()
 }
@@ -951,4 +1328,3 @@ func Run(projects []config.Project, configPath string) (*config.Project, error) 
 
 	return nil, nil
 }
-
