@@ -181,16 +181,6 @@ type configChangedMsg struct {
 	newConfig *config.Config
 }
 
-type processExitMsg struct {
-	idx      int
-	exitCode int
-	err      error
-}
-
-type logUpdateMsg struct{}
-
-type tickMsg time.Time
-
 // KeyMap defines keybindings
 type KeyMap struct {
 	Up         key.Binding
@@ -433,18 +423,13 @@ func checkPortInUse(port int) (bool, *PortInfo) {
 
 // killProcessOnPort kills any process listening on the given port
 func killProcessOnPort(port int) {
-	cmd := exec.Command("lsof", "-i", fmt.Sprintf(":%d", port), "-P", "-n", "-sTCP:LISTEN", "-t")
-	output, err := cmd.Output()
-	if err != nil || len(output) == 0 {
-		return
-	}
-
-	pids := strings.Split(strings.TrimSpace(string(output)), "\n")
-	for _, pid := range pids {
-		pid = strings.TrimSpace(pid)
-		if pid != "" {
-			// Kill the process
-			exec.Command("kill", "-9", pid).Run()
+	// Stop any Docker containers using this port (safe no-op if none exist)
+	cmd := exec.Command("docker", "ps", "--filter", fmt.Sprintf("publish=%d", port), "-q")
+	if output, err := cmd.Output(); err == nil && len(output) > 0 {
+		for _, id := range strings.Split(strings.TrimSpace(string(output)), "\n") {
+			if id = strings.TrimSpace(id); id != "" {
+				exec.Command("docker", "stop", "-t", "2", id).Run()
+			}
 		}
 	}
 
