@@ -268,6 +268,9 @@ type tickMsg time.Time
 type configChangedMsg struct {
 	newConfig *config.Config
 }
+type restartProjectMsg struct {
+	idx int
+}
 
 // KeyMap defines keybindings
 type KeyMap struct {
@@ -277,7 +280,7 @@ type KeyMap struct {
 	ToggleLogs key.Binding
 	ScrollUp   key.Binding
 	ScrollDown key.Binding
-	Reload     key.Binding
+	Restart    key.Binding
 	Quit       key.Binding
 }
 
@@ -300,7 +303,7 @@ var DefaultKeyMap = KeyMap{
 	ScrollDown: key.NewBinding(
 		key.WithKeys("ctrl+d", "pgdown"),
 	),
-	Reload: key.NewBinding(
+	Restart: key.NewBinding(
 		key.WithKeys("r"),
 	),
 	Quit: key.NewBinding(
@@ -700,16 +703,37 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tickMsg:
 		m.spinner = (m.spinner + 1) % len(spinnerFrames)
 
+		// Check ports for starting/running processes
 		for idx, proc := range m.processes {
 			project := m.projects[idx]
 			if project.Port > 0 && (proc.Status == StatusStarting || (proc.ProcessDone && proc.Status != StatusFailed && proc.Status != StatusRunning)) {
 				cmds = append(cmds, checkPortCmd(idx, project.Port))
 			}
 		}
-		cmds = append(cmds, tickCmd())
+
+		// Use faster tick for starting processes, slower for others
+		hasStarting := false
+		for _, proc := range m.processes {
+			if proc.Status == StatusStarting {
+				hasStarting = true
+				break
+			}
+		}
+
+		if hasStarting {
+			// Check more frequently (200ms) when processes are starting
+			cmds = append(cmds, tea.Tick(200*time.Millisecond, func(t time.Time) tea.Msg {
+				return tickMsg(t)
+			}))
+		} else {
+			// Normal tick (500ms) when no processes are starting
+			cmds = append(cmds, tickCmd())
+		}
+
 		return m, tea.Batch(cmds...)
 
 	case portCheckMsg:
+		var cmds []tea.Cmd
 		if proc, ok := m.processes[msg.idx]; ok {
 			project := m.projects[msg.idx]
 			if msg.isUp {
@@ -718,21 +742,39 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					proc.PortCheckRetries = 0
 					delete(m.errorMessages, msg.idx)
 				}
-			} else if proc.ProcessDone && proc.Status == StatusStarting {
-				proc.PortCheckRetries++
-				if proc.PortCheckRetries >= 30 {
-					proc.Status = StatusFailed
-					if proc.ExitCode != 0 {
-						m.errorMessages[msg.idx] = fmt.Sprintf("Process exited with code %d", proc.ExitCode)
+			} else {
+				// Port is not up yet
+				if proc.Status == StatusStarting {
+					// For starting processes, check again soon (200ms)
+					cmds = append(cmds, tea.Tick(200*time.Millisecond, func(t time.Time) tea.Msg {
+						return checkPortCmd(msg.idx, project.Port)()
+					}))
+				} else if proc.ProcessDone && proc.Status == StatusStarting {
+					// Process exited but port never came up
+					proc.PortCheckRetries++
+					if proc.PortCheckRetries >= 30 {
+						proc.Status = StatusFailed
+						if proc.ExitCode != 0 {
+							m.errorMessages[msg.idx] = fmt.Sprintf("Process exited with code %d", proc.ExitCode)
+						} else {
+							m.errorMessages[msg.idx] = fmt.Sprintf("Process exited but port %d never came up", project.Port)
+						}
 					} else {
-						m.errorMessages[msg.idx] = fmt.Sprintf("Process exited but port %d never came up", project.Port)
+						// Check again after a short delay
+						cmds = append(cmds, tea.Tick(200*time.Millisecond, func(t time.Time) tea.Msg {
+							return checkPortCmd(msg.idx, project.Port)()
+						}))
 					}
 				}
 			}
 		}
+		if len(cmds) > 0 {
+			return m, tea.Batch(cmds...)
+		}
 		return m, nil
 
 	case processExitMsg:
+		var cmds []tea.Cmd
 		if proc, ok := m.processes[msg.idx]; ok {
 			proc.ExitCode = msg.exitCode
 			proc.ProcessDone = true
@@ -746,19 +788,29 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					proc.Status = StatusRunning
 					return m, nil
 				}
-				if msg.exitCode != 0 {
-					proc.Status = StatusFailed
-					m.errorMessages[msg.idx] = fmt.Sprintf("Process exited with code %d", msg.exitCode)
-				}
-			} else {
-				if msg.exitCode != 0 {
-					proc.Status = StatusFailed
-					m.errorMessages[msg.idx] = fmt.Sprintf("Process exited with code %d", msg.exitCode)
+				// Port not up yet, schedule a check soon
+				if msg.exitCode == 0 {
+					// Process exited successfully, might be daemonized - check port soon
+					cmds = append(cmds, tea.Tick(200*time.Millisecond, func(t time.Time) tea.Msg {
+						return checkPortCmd(msg.idx, project.Port)()
+					}))
 				} else {
-					proc.Status = StatusStopped
-					delete(m.processes, msg.idx)
+					// Process exited with error
+					proc.Status = StatusFailed
+					m.errorMessages[msg.idx] = fmt.Sprintf("Process exited with code %d", msg.exitCode)
 				}
 			}
+		}
+		if len(cmds) > 0 {
+			return m, tea.Batch(cmds...)
+		}
+		return m, nil
+
+	case restartProjectMsg:
+		// Start the project after restart delay
+		cmd := m.toggleProject(msg.idx)
+		if cmd != nil {
+			return m, cmd
 		}
 		return m, nil
 
@@ -865,13 +917,27 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				}
 			}
 
-		case key.Matches(msg, m.keys.Reload):
-			// Manual reload
-			newConfig, err := config.Load(m.configPath)
-			if err == nil {
-				return m, func() tea.Msg {
-					return configChangedMsg{newConfig: newConfig}
+		case key.Matches(msg, m.keys.Restart):
+			// Restart the selected project
+			projectIdx := m.getSelectedProjectIndex()
+			if projectIdx >= 0 {
+				// If running, stop it first
+				if proc, ok := m.processes[projectIdx]; ok {
+					project := m.projects[projectIdx]
+					if proc.Cmd.Process != nil {
+						syscall.Kill(-proc.PID, syscall.SIGTERM)
+					}
+					// Also kill anything using the port (e.g., Docker containers)
+					if project.Port > 0 {
+						killProcessOnPort(project.Port)
+					}
+					delete(m.processes, projectIdx)
+					delete(m.errorMessages, projectIdx)
 				}
+				// Wait a moment for cleanup, then start
+				return m, tea.Tick(300*time.Millisecond, func(t time.Time) tea.Msg {
+					return restartProjectMsg{idx: projectIdx}
+				})
 			}
 		}
 	}
@@ -1307,7 +1373,7 @@ func (m Model) View() string {
 			helpKeyStyle.Render("j/k") + helpDescStyle.Render(" select"),
 			helpKeyStyle.Render("Enter") + helpDescStyle.Render(" start/stop"),
 			helpKeyStyle.Render("l") + helpDescStyle.Render(" logs"),
-			helpKeyStyle.Render("r") + helpDescStyle.Render(" reload"),
+			helpKeyStyle.Render("r") + helpDescStyle.Render(" restart"),
 			helpKeyStyle.Render("q") + helpDescStyle.Render(" quit"),
 		}
 	}
