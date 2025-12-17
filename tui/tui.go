@@ -181,16 +181,6 @@ type configChangedMsg struct {
 	newConfig *config.Config
 }
 
-type processExitMsg struct {
-	idx      int
-	exitCode int
-	err      error
-}
-
-type logUpdateMsg struct{}
-
-type tickMsg time.Time
-
 // KeyMap defines keybindings
 type KeyMap struct {
 	Up         key.Binding
@@ -966,3 +956,4 @@ func Run(projects []config.Project, configPath string) (*config.Project, error) 
 
 	return nil, nil
 }
+
