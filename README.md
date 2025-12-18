@@ -14,7 +14,7 @@ An interactive TUI project launcher built with [Bubble Tea](https://github.com/c
 ## Installation
 
 ```bash
-go install github.com/gettinshitdun/doceye@v1.1.0
+go install github.com/gettinshitdun/doceye@v1.1.1
 ```
 
 Or build from source:
